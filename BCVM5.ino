@@ -40,21 +40,20 @@ struct systemSettings {
   bool MOSFET_2_IS_FIRED;
   bool MOSFET_3_IS_FIRED;
   bool fallen;
-  long int apogee;
-  long int maxSpeed;
   long int seaLevel;
   long int temperature;
   unsigned int packSize;
   unsigned int framPos;
   long int altNew;
   long int altOld;
+  int maxSpeed;
 };
 
 struct telemetryStruct {
   long int timeStamp;
-  long int pressure;
   long int altitude;
   long int speed;
+  long int pressure;
   unsigned char accelX;
   unsigned char accelY;
   unsigned char accelZ;
@@ -231,10 +230,20 @@ void getTelemetry() {
   getBmp280();
   getGyros();
 
+  if (telemetry.speed > set.maxSpeed) {
+    set.maxSpeed = telemetry.speed;
+    EEPROM.update(994, set.maxSpeed);
+  }
+
   Serial.print(F("altitude = "));
   Serial.println(telemetry.altitude);
   Serial.print(F("pressure = "));
   Serial.println(telemetry.pressure);
+
+  Serial.print(F("speed = "));
+  Serial.println(telemetry.speed);
+  Serial.print(F("maxSpeed = "));
+  Serial.println(set.maxSpeed);
 
   Serial.print(F("accelX = "));
   Serial.println(telemetry.accelX);
@@ -249,10 +258,12 @@ void getTelemetry() {
   Serial.println(telemetry.gyrosY);
   Serial.print(F("gyrosZ = "));
   Serial.println(telemetry.gyrosZ);
+  Serial.println("-------------------------");
 }
 
 
 void fallingSense() {
+  /*
   long int filtered = altitudeFiltered();
 
   if (!Fallen && telemetry.altitude > 10 and telemetry.speed < 20) {
@@ -275,24 +286,36 @@ void fallingSense() {
       newAltitude = filtered;
     }
   }
+*/
+}
+
+// new keyboard test. Непривычно, но надеюсь привыкну, хоть русские кнопки не красным почерному, которые я пасмурным днем и то не вижу.
+// Гром гремит, земля трясется. Это наш физрук несется.
+// Терпимо, она достаточно жесткая чтобы по ошибке не нажимались соседние когда промазываешь.
+bool anti(bool input) {
+  return !input;
 }
 
 bool writeTelemetry(void) {
-  unsigned char *telemetry_bytes;
   unsigned int bufPos = 0;
+  unsigned char byte, adr;
+  unsigned char pack[set.packSize];
 
-  if (set.framPos > RAMTOP) {
-    Serial.println("FRAM is full.");
-    return false;
-  }
-
-  telemetry_bytes = (unsigned char *)&telemetry;
+  memcpy(&pack, &telemetry, sizeof(telemetry));
 
   do {
-    drive.write(set.framPos + bufPos, telemetry_bytes + bufPos);
+    byte = pack[bufPos];
+    adr = set.framPos + bufPos;
+
+    Serial.print("|");
+    Serial.print(adr);
+    Serial.print(" = ");
+    Serial.print(byte);
+
+    drive.write(adr, byte);
     bufPos++;
   } while (bufPos < set.packSize);
-
+  Serial.println(" ");
   set.framPos = set.framPos + set.packSize;
   return true;
 }
@@ -373,8 +396,9 @@ void setup() {
   Wire.setClock(400000);
   Serial.begin(115200);
   Serial.println("Start.");
-  millisshift = millis();
   set.logPos = 0;
+  set.framPos = 0;
+  millisshift = millis();
 
   beeper(250);
 
@@ -408,8 +432,6 @@ void setup() {
   toLog(F("BMP280 OK."));
   set.temperature = bmp.readTemperature();
   toLog("Site temp = " + String(set.temperature));
-  Serial.print(F("Site temperature = "));
-  Serial.println(set.temperature);
   delay(1000);
 
   // IMU test
@@ -442,37 +464,32 @@ void setup() {
     //no fly - no telemetry
   } while (bmp.readAltitude(set.seaLevel) < MIN_ALTITUDE);
   EEPROM.update(990, 0x00);  // Clear Apogee;
-  EEPROM.update(994, 0x00);  // Clear MaxSpeed;
+  EEPROM.update(994, 0x00);  // Clear maxSpeed;
 }
 
 void loop() {
   bool written;
+  if (SpeedMeterRun.isReady()) {
+    telemetry.speed = speedOmeter();
+  }
 
   if (telemetryRun.isReady()) {
     getTelemetry();
     written = writeTelemetry();
+    Serial.print("written =");
+    Serial.println(written);
+    Serial.print("counter =");
+    Serial.println(counter);
     counter++;
     //if (!writeTelemetry()) {
     //telemetryRun.stop();
     //}
   }
 
-  if (SpeedMeterRun.isReady()) {
-    telemetry.speed = speedOmeter();
-
-    if (telemetry.speed > set.maxSpeed) {
-      set.maxSpeed = telemetry.speed;
-      EEPROM.update(994, set.MaxSpeed);
-    }
-    Serial.print(F("speed = "));
-    Serial.println(telemetry.speed);
-    Serial.print(F("maxSpeed = "));
-    Serial.println(set.maxSpeed);
-  }
-
-  if (counter == 5 || written == 0) {
+  if (counter == 10 || written == 0) {
     counter++;
     telemetryRun.stop();
+    display.displayByte(_dash, _2, _8, _0);
     toLog("Telemetry Stopped");
     readLog();
     readTelemetry();
